@@ -55,7 +55,11 @@ add_library( # Sets the name of the library.
         # Provides a relative path to your source file(s).
         videoStab.cpp
         videoStab.h)
-
+add_library( # Sets the name of the library.
+        motion
+        SHARED
+        motion.cpp
+        motion.h)
 # Searches for a specified prebuilt library and stores the path as a
 # variable. Because CMake includes system libraries in the search path by
 # default, you only need to specify the name of the public NDK library
@@ -105,12 +109,25 @@ target_link_libraries( # Specifies the target library.
         # Links the target library to the log library
         # included in the NDK.
         ${log-lib})
+
+# --- [!! 关键修复 !!] ---
+# 你缺少了这个代码块。
+# 它告诉 motion 库去链接 OpenCV 和 stab 库。
+target_link_libraries( # Specifies the target library.
+        motion
+        ${OpenCV_LIBS} # 链接 OpenCV
+        stab           # 链接 stab
+        ${log-lib}     # 链接 log
+)
+# --- [!! 修复结束 !!] ---
+
 target_link_libraries(
         native-lib
         dehaze
         enhance
         threshold
         stab
+        motion         # <-- [!! 关键修复 !!] 你也缺少了这一行
         ${OpenCV_LIBS} # <-- MODIFIED
         ${log-lib}
 )

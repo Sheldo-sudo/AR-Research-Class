@@ -5,6 +5,7 @@ import static com.example.glasspro.NativeProcessor.enhance;
 import static com.example.glasspro.NativeProcessor.enhanceByCLAHE;
 import static com.example.glasspro.NativeProcessor.enhanceByMSRCR;
 import static com.example.glasspro.NativeProcessor.videoStab;
+import static com.example.glasspro.NativeProcessor.detectMotion;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -27,9 +28,36 @@ import org.opencv.android.CameraBridgeViewBase.CvCameraViewListener2;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfRect;
+import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
+import org.opencv.imgproc.Imgproc;
 
 public class MainActivity extends Activity implements CvCameraViewListener2 {
     private static final String TAG = "MainActivity";
+
+    // --- [!! 关键：静态代码块只负责加载库，不创建 MatOfRect !!] ---
+    static {
+        if (!OpenCVLoader.initDebug()) {
+            Log.e(TAG, "STATIC: OpenCV library load failed!");
+        } else {
+            Log.d(TAG, "STATIC: OpenCV library loaded successfully!");
+        }
+        try {
+            System.loadLibrary("dehaze");
+            System.loadLibrary("enhance");
+            System.loadLibrary("threshold");
+            System.loadLibrary("stab");
+            System.loadLibrary("motion");
+            System.loadLibrary("native-lib");
+            Log.d(TAG, "STATIC: All native libraries loaded successfully");
+        } catch (UnsatisfiedLinkError e) {
+            Log.e(TAG, "STATIC: Failed to load native libraries: " + e.getMessage());
+        }
+    }
+    // --- [!! 静态代码块结束 !!] ---
+
+
     private static final int CAMERA_PERMISSION_REQUEST = 1;
     private static final int MAX_FRAME_WIDTH = 1280;
     private static final int MAX_FRAME_HEIGHT = 720;
@@ -47,7 +75,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     private boolean isFirstFrame = true;
     private CameraBridgeViewBase mOpenCvCameraView;
     private Mat lastFrameForStab;
-
+    private Mat lastFrameForMotion;
     private Mat lastFrameForEnhance;
     // UI组件
     private Button btnEnhance;
@@ -55,29 +83,41 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     private Button btnCLAHE;
     private Button btnMSRCR;
 
+    // --- [!! 运动检测变量 !!] ---
+    private boolean isMotionEnabled = true;
+    private int motionFrameCounter = 0;
+    private static final int MOTION_DETECTION_STRIDE = 6;
+
+    // --- [!! 核心修改：这里不再直接 new MatOfRect() !!] ---
+    private MatOfRect lastDetectedBoxes = null; // 现在它被初始化为 null
+    private Rect[] lastBoxesArray = new Rect[0];
+    // --- [!! 修改结束 !!] ---
+
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         Log.i(TAG, "called onCreate");
         super.onCreate(savedInstanceState);
-        // 初始化OpenCV
-        if (!initializeOpenCV()) {
+
+        if (!initializeOpenCV()) { // 这里的 OpenCVLoader.initDebug() 也是一个很好的运行时检查
             return;
         }
-        // 保持屏幕常亮
+
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         requestPermissions();
-        // 初始化UI
         initializeUI();
     }
+
     private boolean initializeOpenCV() {
         if (!OpenCVLoader.initDebug()) {
-            Log.e(TAG, "OpenCV initialization failed!");
-            Toast.makeText(this, "OpenCV initialization failed!", Toast.LENGTH_LONG).show();
+            Log.e(TAG, "OpenCV (C++) library initialization failed! (Static block FAILED)");
+            Toast.makeText(this, "OpenCV (C++) library initialization failed!", Toast.LENGTH_LONG).show();
             return false;
         }
-        Log.i(TAG, "OpenCV loaded successfully");
+        Log.i(TAG, "OpenCV (C++) library loaded successfully (from static block check)");
         return true;
     }
+
     private void requestPermissions() {
         ActivityCompat.requestPermissions(
                 this,
@@ -146,8 +186,27 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     public Mat onCameraFrame(CvCameraViewFrame frame) {
         Mat inputFrame = frame.rgba();
         try {
+            // --- [!! 核心修改：懒加载 MatOfRect !!] ---
+            if (lastDetectedBoxes == null) {
+                // 只有当 C++ 库确定加载成功后，才在这里首次创建 MatOfRect
+                // 它会在 onCameraFrame 第一次运行时被创建
+                lastDetectedBoxes = new MatOfRect();
+                Log.d(TAG, "lastDetectedBoxes created lazily on first frame.");
+            }
+            // --- [!! 修改结束 !!] ---
+
+            // 1. 稳像处理 (每帧运行)
             processStab(inputFrame);
+
+            // 2. 按键增强处理 (每帧运行)
             processFrame(inputFrame);
+
+            // 3. 自动的、节流的运动 "检测" (昂贵)
+            processMotion_Detection(inputFrame);
+
+            // 4. 自动的、每帧的运动 "绘制" (廉价)
+            drawMotion_Drawing(inputFrame);
+
         } catch (Exception e) {
             Log.e(TAG, "Error processing frame: " + e.getMessage());
         }
@@ -171,6 +230,49 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
                 break;
         }
     }
+
+    /**
+     * 在后台自动运行的、节流的运动 "检测" (昂贵)
+     */
+    private void processMotion_Detection(Mat frame) {
+        if (isMotionEnabled && lastDetectedBoxes != null) { // [!! 额外检查 !!]
+            motionFrameCounter++;
+            if (motionFrameCounter % MOTION_DETECTION_STRIDE == 0) {
+                if (motionFrameCounter > 1000) motionFrameCounter = 0;
+
+                Mat old = new Mat();
+                frame.copyTo(old);
+
+                if (lastFrameForMotion != null && !lastFrameForMotion.empty()) {
+                    detectMotion(
+                            lastFrameForMotion.getNativeObjAddr(),
+                            frame.getNativeObjAddr(),
+                            lastDetectedBoxes.getNativeObjAddr()
+                    );
+                    lastBoxesArray = lastDetectedBoxes.toArray();
+                }
+
+                if (lastFrameForMotion == null) {
+                    lastFrameForMotion = new Mat();
+                }
+                old.copyTo(lastFrameForMotion);
+                old.release();
+            }
+        }
+    }
+
+    /**
+     * 在 "每帧" 运行的运动 "绘制" (廉价)
+     */
+    private void drawMotion_Drawing(Mat frame) {
+        if (isMotionEnabled && lastBoxesArray != null && lastBoxesArray.length > 0) {
+            for (Rect box : lastBoxesArray) {
+                Imgproc.rectangle(frame, box, new Scalar(0, 255, 0, 255), 3);
+            }
+        }
+    }
+
+
     private void processEnhance(Mat frame) {
         Mat old = new Mat();
         frame.copyTo(old);
@@ -196,7 +298,6 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     }
     private void processMSRCR(Mat frame) {
         if (frame != null && !frame.empty()) {
-            // Call the MSRCR enhancement method
             enhanceByMSRCR(frame.getNativeObjAddr());
         }
     }
@@ -217,15 +318,20 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     //在相机启动时
     @Override
     public void onCameraViewStarted(int width, int height) {
-
+        // [!! 修改：这里不再重新创建 lastDetectedBoxes !!]
+        // 它会通过 onCameraFrame 中的懒加载模式自动创建。
+        isFirstFrame = true;
+        if (lastFrameForStab != null) { lastFrameForStab.release(); lastFrameForStab = null; }
+        if (lastFrameForMotion != null) { lastFrameForMotion.release(); lastFrameForMotion = null; }
+        if (lastFrameForEnhance != null) { lastFrameForEnhance.release(); lastFrameForEnhance = null; }
+        lastBoxesArray = new Rect[0]; // 清空数组
     }
+
     @Override
     public void onCameraViewStopped() {
         releaseResources();
     }
-    /**
-     * 在暂停时停止OpenCV视图并释放资源。
-     */
+
     @Override
     public void onPause() {
         super.onPause();
@@ -233,22 +339,19 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
             mOpenCvCameraView.disableView();
         }
     }
-    /**
-     * 在恢复时重新启用OpenCV视图。
-     */
+
     @Override
     public void onResume() {
         super.onResume();
         if (mOpenCvCameraView != null) {
             mOpenCvCameraView.enableView();
         }
-        isFirstFrame = true;
+        // [!! 修改：不再在这里重置 isFirstFrame, 因为 onCameraViewStarted 会做 !!]
+        // isFirstFrame = true;
         currentMode = ProcessingMode.NONE;
         updateButtonStates();
     }
-    /**
-     * 在销毁时释放所有资源。
-     */
+
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -257,6 +360,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
         }
         releaseResources();
     }
+
     private void releaseResources() {
         try {
             if (lastFrameForStab != null) {
@@ -267,9 +371,21 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
                 lastFrameForEnhance.release();
                 lastFrameForEnhance = null;
             }
+            if (lastFrameForMotion != null) {
+                lastFrameForMotion.release();
+                lastFrameForMotion = null;
+            }
+            // --- [!! 仍然释放 !!] ---
+            if (lastDetectedBoxes != null) {
+                lastDetectedBoxes.release();
+                lastDetectedBoxes = null;
+            }
+            // --- [!! 释放结束 !!] ---
+
+            lastBoxesArray = new Rect[0]; // 清空数组
 
         } catch (Exception e) {
-            Log.e(TAG, "Error releasing lastFrame: " + e.getMessage());
+            Log.e(TAG, "Error releasing resources: " + e.getMessage());
         }
     }
 }
