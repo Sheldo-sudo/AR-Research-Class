@@ -1,0 +1,25 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+        // 下面是部署说明里提到的国内镜像，可以加速下载
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://repo.huaweicloud.com/repository/maven/' }
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        // 同样为库依赖添加国内镜像
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://repo.huaweicloud.com/repository/maven/' }
+    }
+}
+
+rootProject.name = "Research_classroom_2025-main" // 你的项目名称，可以保留
+include ':app'
+include ':opencv'
+project(':opencv').projectDir = new File(rootDir, 'sdk/')
