@@ -49,4 +49,34 @@ public class NativeProcessor {
      * @param matAddrOutBoxes [输出] MatOfRect 的内存地址，用于 C++ 返回方框
      */
     public static native void detectMotion(long matAddrPrev, long matAddrCurrent, long matAddrOutBoxes);
+
+
+    // --- [!! 以下是新增的 DNN 目标检测函数 !!] ---
+
+    /**
+     * [!! 新增 !!]
+     * Native 方法：加载 DNN 目标检测网络。
+     * @param proto 模型的 .prototxt 文件路径
+     * @param model 模型的 .caffemodel 文件路径
+     * @return 指向 C++ 中 cv::dnn::Net 对象的指针 (jlong)
+     */
+    public static native long loadObjectDetector(String proto, String model);
+
+    /**
+     * [!! 新增 !!]
+     * Native 方法：释放 DNN 网络占用的内存。
+     * @param netPtr loadObjectDetector 返回的指针
+     */
+    public static native void releaseObjectDetector(long netPtr);
+
+    /**
+     * [!! 新增 !!]
+     * Native 方法：运行神经网络检测。
+     * @param netPtr C++ 网络指针
+     * @param frameAddr 当前帧的 Mat 地址
+     * @param boxesAddr (输出) MatOfRect 的地址，用于存放检测框
+     * @param classIdsAddr (输出) MatOfInt 的地址，用于存放类别 ID
+     * @param confThreshold 置信度阈值 (例如 0.4)
+     */
+    public static native void detectObjectsNN(long netPtr, long frameAddr, long boxesAddr, long classIdsAddr, float confThreshold);
 }

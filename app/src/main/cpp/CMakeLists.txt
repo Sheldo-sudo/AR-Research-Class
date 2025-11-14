@@ -20,10 +20,9 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 # --- End of OpenCV Configuration ---
 
 
-# Creates and names a library, sets it as either STATIC
-# or SHARED, and provides the relative paths to its source code.
-# You can define multiple libraries, and CMake builds them for you.
-# Gradle automatically packages shared libraries with your APK.
+# ===================================================================
+# 1. 定义你所有的功能模块库
+# ===================================================================
 
 add_library( # Sets the name of the library.
         dehaze
@@ -60,16 +59,28 @@ add_library( # Sets the name of the library.
         SHARED
         motion.cpp
         motion.h)
-# Searches for a specified prebuilt library and stores the path as a
-# variable. Because CMake includes system libraries in the search path by
-# default, you only need to specify the name of the public NDK library
-# you want to add. CMake verifies that the library exists before
-# completing its build.
+
+# --- [!! 新增库：DNN 目标检测 !!] ---
+add_library( # Sets the name of the library.
+        vision_processor
+        # Sets the library as a shared library.
+        SHARED
+        # Provides a relative path to your source file(s).
+        vision_processor.cpp
+        vision_processor.h)
+# --- [!! 新增结束 !!] ---
+
+
+# 这是你的主 JNI 库 (native-lib.cpp 所在的位置)
 add_library(
         native-lib
         SHARED
         native-lib.cpp
 )
+
+# ===================================================================
+# 2. 查找系统库
+# ===================================================================
 
 find_library( # Sets the name of the path variable.
         log-lib
@@ -78,9 +89,11 @@ find_library( # Sets the name of the path variable.
         # you want CMake to locate.
         log)
 
-# Specifies libraries CMake should link to your target library. You
-# can link multiple libraries, such as libraries you define in this
-# build script, prebuilt third-party libraries, or system libraries.
+# ===================================================================
+# 3. 链接所有库
+# ===================================================================
+
+# --- 链接所有功能模块 ---
 
 target_link_libraries( # Specifies the target library.
         dehaze
@@ -110,24 +123,33 @@ target_link_libraries( # Specifies the target library.
         # included in the NDK.
         ${log-lib})
 
-# --- [!! 关键修复 !!] ---
-# 你缺少了这个代码块。
-# 它告诉 motion 库去链接 OpenCV 和 stab 库。
 target_link_libraries( # Specifies the target library.
         motion
         ${OpenCV_LIBS} # 链接 OpenCV
         stab           # 链接 stab
         ${log-lib}     # 链接 log
 )
-# --- [!! 修复结束 !!] ---
 
+# --- [!! 新增库的链接 !!] ---
+target_link_libraries( # Specifies the target library.
+        vision_processor
+        ${OpenCV_LIBS} # 链接 OpenCV (DNN 模块)
+        ${log-lib}     # 链接 log
+)
+# --- [!! 新增结束 !!] ---
+
+
+# --- 链接你的主库 "native-lib" ---
+# 你的 MainActivity 只加载 "native-lib"，
+# 所以 "native-lib" 必须链接 *所有* 其他模块。
 target_link_libraries(
         native-lib
         dehaze
         enhance
         threshold
         stab
-        motion         # <-- [!! 关键修复 !!] 你也缺少了这一行
-        ${OpenCV_LIBS} # <-- MODIFIED
+        motion
+        vision_processor  # <-- [!! 核心修改：添加新库 !!]
+        ${OpenCV_LIBS}
         ${log-lib}
 )

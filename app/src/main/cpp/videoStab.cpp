@@ -13,6 +13,12 @@ using namespace std;
 // 调试模式
 #define test 0
 
+// [!! 修复 3：添加缺失的定义 !!]
+// 这个值在你的代码中被使用了 (line 73, 186)，但是从未被定义。
+// 它代表从左右边缘裁剪的像素数，以隐藏稳像带来的黑边。
+// 30 是一个合理的默认值。
+#define HORIZONTAL_BORDER_CROP 30
+
 int height;
 int width;
 
@@ -182,6 +188,8 @@ Mat VideoStab::stabilize(Mat frame_1, Mat frame_2, double accel_x, double accel_
 
     warpAffine(frame_1, smoothedFrame, smoothedMat, frame_2.size());
 
+    // [!! 修复 4：修复拼写错误 !!]
+    // 将 (小写) horizontal_border_crop 修正为 (大写) HORIZONTAL_BORDER_CROP
     smoothedFrame = smoothedFrame(Range(vert_border, smoothedFrame.rows - vert_border),
                                   Range(HORIZONTAL_BORDER_CROP, smoothedFrame.cols - HORIZONTAL_BORDER_CROP));
 
@@ -224,10 +232,11 @@ void VideoStab::Kalman_Filter(double* scaleX, double* scaleY, double* thetha, do
     errtransY = (1 - gain_transY) * frame_1_errtransY;
 }
 
+// JNI 函数 (来自回答 #14，保持不变，它已经是正确的)
 extern "C" {
 void JNICALL
 Java_com_example_glasspro_NativeProcessor_videoStab(JNIEnv *env, jclass clazz, jlong mat_addr1,
-                                                 jlong mat_addr2) {
+                                                    jlong mat_addr2) {
     // 从原始地址获取 Mat 对象
     Mat frame1 = *(Mat *) mat_addr1;
     Mat frame2 = *(Mat *) mat_addr2;
@@ -236,8 +245,12 @@ Java_com_example_glasspro_NativeProcessor_videoStab(JNIEnv *env, jclass clazz, j
     width = image.cols;
     height = image.rows;
 
-    VideoStab stab;
-    // 调用 stab 算法
-    image = stab.stabilize(frame1, frame2);
+    // [!! 修复 1：致命Bug !!]
+    // 将 stab 对象声明为 static。
+    static VideoStab stab;
+
+    // [!! 修复 2：编译错误 !!]
+    // 传入 0.0 作为虚拟的加速度值
+    image = stab.stabilize(frame1, frame2, 0.0, 0.0, 0.0);
 }
 }

@@ -1,15 +1,19 @@
 package com.example.glasspro;
 
+// 静态导入新的 NativeProcessor
 import static com.example.glasspro.NativeProcessor.dehaze;
 import static com.example.glasspro.NativeProcessor.enhance;
 import static com.example.glasspro.NativeProcessor.enhanceByCLAHE;
 import static com.example.glasspro.NativeProcessor.enhanceByMSRCR;
 import static com.example.glasspro.NativeProcessor.videoStab;
-import static com.example.glasspro.NativeProcessor.detectMotion;
+import static com.example.glasspro.NativeProcessor.loadObjectDetector;
+import static com.example.glasspro.NativeProcessor.releaseObjectDetector;
+import static com.example.glasspro.NativeProcessor.detectObjectsNN;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -28,29 +32,45 @@ import org.opencv.android.CameraBridgeViewBase.CvCameraViewListener2;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfInt;
 import org.opencv.core.MatOfRect;
+import org.opencv.core.Point;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
+import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.List;
+
 
 public class MainActivity extends Activity implements CvCameraViewListener2 {
     private static final String TAG = "MainActivity";
 
-    // --- [!! 关键：静态代码块只负责加载库，不创建 MatOfRect !!] ---
+    // --- [!! 关键修复：加载所有 C++ 库 !!] ---
     static {
         if (!OpenCVLoader.initDebug()) {
             Log.e(TAG, "STATIC: OpenCV library load failed!");
         } else {
             Log.d(TAG, "STATIC: OpenCV library loaded successfully!");
         }
+
         try {
+            // 加载在 CMakeLists.txt 中定义的 *所有* 库
             System.loadLibrary("dehaze");
             System.loadLibrary("enhance");
             System.loadLibrary("threshold");
-            System.loadLibrary("stab");
+            System.loadLibrary("stab");           // <-- 包含 videoStab()
             System.loadLibrary("motion");
-            System.loadLibrary("native-lib");
+            System.loadLibrary("native-lib");     // <-- 你的主库
+            System.loadLibrary("vision_processor"); // <-- 包含 DNN 函数
+
             Log.d(TAG, "STATIC: All native libraries loaded successfully");
+
         } catch (UnsatisfiedLinkError e) {
             Log.e(TAG, "STATIC: Failed to load native libraries: " + e.getMessage());
         }
@@ -75,7 +95,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     private boolean isFirstFrame = true;
     private CameraBridgeViewBase mOpenCvCameraView;
     private Mat lastFrameForStab;
-    private Mat lastFrameForMotion;
+    // private Mat lastFrameForMotion; // 不再需要
     private Mat lastFrameForEnhance;
     // UI组件
     private Button btnEnhance;
@@ -83,15 +103,37 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     private Button btnCLAHE;
     private Button btnMSRCR;
 
-    // --- [!! 运动检测变量 !!] ---
-    private boolean isMotionEnabled = true;
-    private int motionFrameCounter = 0;
-    private static final int MOTION_DETECTION_STRIDE = 6;
+    // --- [!! 调试：DNN 目标检测变量 !!] ---
+    private long dnnNetPtr = 0;
+    private static final String MODEL_PROTO = "mobilenet_ssd.prototxt";
+    private static final String MODEL_WEIGHTS = "mobilenet_ssd.caffemodel";
 
-    // --- [!! 核心修改：这里不再直接 new MatOfRect() !!] ---
-    private MatOfRect lastDetectedBoxes = null; // 现在它被初始化为 null
+    // [!! 修复：降低置信度阈值 !!]
+    private static final float CONFIDENCE_THRESHOLD = 0.2f; // 40% 降到 10%
+    // --- [!! 修复结束 !!] ---
+
+    // MobileNet-SSD COCO 数据集的前21个类别
+    private final List<String> classNames = Arrays.asList(
+            "background", "aeroplane", "bicycle", "bird", "boat", "bottle",
+            "bus", "car", "cat", "chair", "cow", "diningtable", "dog",
+            "horse", "motorbike", "person", "pottedplant", "sheep", "sofa",
+            "train", "tvmonitor");
+    private final Scalar[] classColors = new Scalar[]{
+            new Scalar(0, 0, 0), new Scalar(255, 0, 0), new Scalar(0, 255, 0),
+            new Scalar(0, 0, 255), new Scalar(255, 255, 0), new Scalar(0, 255, 255),
+            new Scalar(255, 0, 255), new Scalar(192, 192, 192), new Scalar(128, 128, 128),
+            new Scalar(128, 0, 0), new Scalar(128, 128, 0), new Scalar(0, 128, 0),
+            new Scalar(128, 0, 128), new Scalar(0, 128, 128), new Scalar(0, 0, 128),
+            new Scalar(255, 165, 0), // person (橙色)
+            new Scalar(255, 255, 255), new Scalar(128, 128, 128), new Scalar(0, 0, 0),
+            new Scalar(0, 0, 0), new Scalar(0, 0, 0)
+    };
+
+
+    private MatOfRect lastDetectedBoxes = null;
+    private MatOfInt lastDetectedClassIds = null;
     private Rect[] lastBoxesArray = new Rect[0];
-    // --- [!! 修改结束 !!] ---
+    private int[] lastIdsArray = new int[0];
 
 
     @Override
@@ -99,7 +141,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
         Log.i(TAG, "called onCreate");
         super.onCreate(savedInstanceState);
 
-        if (!initializeOpenCV()) { // 这里的 OpenCVLoader.initDebug() 也是一个很好的运行时检查
+        if (!initializeOpenCV()) {
             return;
         }
 
@@ -138,7 +180,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
         mOpenCvCameraView.setCameraIndex(0);
         mOpenCvCameraView.setMaxFrameSize(MAX_FRAME_WIDTH, MAX_FRAME_HEIGHT);
     }
-    @SuppressLint("SetTextI18n")
+    @SuppressLint("SetTextI1n")
     private void initializeButtons() {
         btnEnhance = findViewById(R.id.button1);
         btnDehaze = findViewById(R.id.button2);
@@ -186,32 +228,33 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     public Mat onCameraFrame(CvCameraViewFrame frame) {
         Mat inputFrame = frame.rgba();
         try {
-            // --- [!! 核心修改：懒加载 MatOfRect !!] ---
             if (lastDetectedBoxes == null) {
-                // 只有当 C++ 库确定加载成功后，才在这里首次创建 MatOfRect
-                // 它会在 onCameraFrame 第一次运行时被创建
                 lastDetectedBoxes = new MatOfRect();
                 Log.d(TAG, "lastDetectedBoxes created lazily on first frame.");
             }
-            // --- [!! 修改结束 !!] ---
+            if (lastDetectedClassIds == null) {
+                lastDetectedClassIds = new MatOfInt();
+                Log.d(TAG, "lastDetectedClassIds created lazily on first frame.");
+            }
 
-            // 1. 稳像处理 (每帧运行)
+            // 1. 稳像处理 (每帧运行, 全新 C++ 实现)
             processStab(inputFrame);
 
             // 2. 按键增强处理 (每帧运行)
             processFrame(inputFrame);
 
-            // 3. 自动的、节流的运动 "检测" (昂贵)
-            processMotion_Detection(inputFrame);
+            // 3. 自动的、每帧的 DNN 目标 "检测" (昂贵)
+            processObjectDetection(inputFrame);
 
-            // 4. 自动的、每帧的运动 "绘制" (廉价)
-            drawMotion_Drawing(inputFrame);
+            // 4. 自动的、每帧的目标 "绘制" (廉价)
+            drawDetections(inputFrame);
 
         } catch (Exception e) {
             Log.e(TAG, "Error processing frame: " + e.getMessage());
         }
         return inputFrame;
     }
+
     private void processFrame(Mat frame) {
         switch (currentMode) {
             case ENHANCE:
@@ -232,43 +275,66 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
     }
 
     /**
-     * 在后台自动运行的、节流的运动 "检测" (昂贵)
+     * 在后台自动运行的、每帧的 DNN "检测" (昂贵)
      */
-    private void processMotion_Detection(Mat frame) {
-        if (isMotionEnabled && lastDetectedBoxes != null) { // [!! 额外检查 !!]
-            motionFrameCounter++;
-            if (motionFrameCounter % MOTION_DETECTION_STRIDE == 0) {
-                if (motionFrameCounter > 1000) motionFrameCounter = 0;
+    private void processObjectDetection(Mat frame) {
+        if (dnnNetPtr != 0 && lastDetectedBoxes != null && lastDetectedClassIds != null) {
+            lastDetectedBoxes.release();
+            lastDetectedClassIds.release();
+            lastDetectedBoxes = new MatOfRect();
+            lastDetectedClassIds = new MatOfInt();
 
-                Mat old = new Mat();
-                frame.copyTo(old);
+            // 调用 Native DNN 检测
+            detectObjectsNN(
+                    dnnNetPtr,
+                    frame.getNativeObjAddr(),
+                    lastDetectedBoxes.getNativeObjAddr(),
+                    lastDetectedClassIds.getNativeObjAddr(),
+                    CONFIDENCE_THRESHOLD // [!! 修复 !!] 现在传入的是 0.1f
+            );
 
-                if (lastFrameForMotion != null && !lastFrameForMotion.empty()) {
-                    detectMotion(
-                            lastFrameForMotion.getNativeObjAddr(),
-                            frame.getNativeObjAddr(),
-                            lastDetectedBoxes.getNativeObjAddr()
-                    );
-                    lastBoxesArray = lastDetectedBoxes.toArray();
-                }
-
-                if (lastFrameForMotion == null) {
-                    lastFrameForMotion = new Mat();
-                }
-                old.copyTo(lastFrameForMotion);
-                old.release();
-            }
+            lastBoxesArray = lastDetectedBoxes.toArray();
+            lastIdsArray = lastDetectedClassIds.toArray();
         }
     }
 
+
     /**
-     * 在 "每帧" 运行的运动 "绘制" (廉价)
+     * [!! 调试版本 !!]
+     * 在 "每帧" 运行的目标 "绘制" (廉价)
      */
-    private void drawMotion_Drawing(Mat frame) {
-        if (isMotionEnabled && lastBoxesArray != null && lastBoxesArray.length > 0) {
-            for (Rect box : lastBoxesArray) {
-                Imgproc.rectangle(frame, box, new Scalar(0, 255, 0, 255), 3);
+    private void drawDetections(Mat frame) {
+        if (lastBoxesArray != null && lastIdsArray != null && lastBoxesArray.length > 0 && lastBoxesArray.length == lastIdsArray.length) {
+
+            // [!! 新增调试日志 !!] 告诉我们 C++ 返回了多少个物体
+            Log.d(TAG, "Java drawDetections: C++ returned " + lastBoxesArray.length + " objects this frame.");
+
+            for (int i = 0; i < lastBoxesArray.length; i++) {
+                Rect box = lastBoxesArray[i];
+                int classId = lastIdsArray[i];
+
+                String label = (classId >= 0 && classId < classNames.size()) ? classNames.get(classId) : "Unknown";
+                Scalar color = (classId >= 0 && classId < classColors.length) ? classColors[classId] : new Scalar(255, 255, 255);
+
+                // [!! 新增调试日志 !!] 告诉我们每个物体的具体标签
+                Log.d(TAG, "  -> Drawing Object " + i + ": " + label);
+
+                // [!! 关键修改：注释掉过滤器 !!]
+                // if (label.equals("person") || label.equals("car") || label.equals("bus") || label.equals("motorbike")) {
+
+                Imgproc.rectangle(frame, box, color, 3);
+                Point labelPos = new Point(box.x, box.y - 10);
+                if (labelPos.y < 10) {
+                    labelPos.y = box.y + 30;
+                }
+                Imgproc.putText(frame, label, labelPos, Imgproc.FONT_HERSHEY_SIMPLEX, 1.0, color, 3);
+
+                // } // [!! 关键修改：注释掉过滤器 !!]
             }
+        }
+        // [!! 新增调试日志 !!]
+        else if (lastBoxesArray != null && lastBoxesArray.length == 0) {
+            Log.d(TAG, "Java drawDetections: C++ returned 0 objects.");
         }
     }
 
@@ -284,7 +350,6 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
             lastFrameForEnhance = new Mat();
         }
         old.copyTo(lastFrameForEnhance);
-
     }
     private void processDehaze(Mat frame) {
         if (frame != null && !frame.empty()) {
@@ -301,6 +366,10 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
             enhanceByMSRCR(frame.getNativeObjAddr());
         }
     }
+
+    /**
+     * 稳像处理
+     */
     private void processStab(Mat frame) {
         Mat old = new Mat();
         frame.copyTo(old);
@@ -313,18 +382,46 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
             lastFrameForStab = new Mat();
         }
         old.copyTo(lastFrameForStab);
-
     }
+
     //在相机启动时
     @Override
     public void onCameraViewStarted(int width, int height) {
-        // [!! 修改：这里不再重新创建 lastDetectedBoxes !!]
-        // 它会通过 onCameraFrame 中的懒加载模式自动创建。
         isFirstFrame = true;
         if (lastFrameForStab != null) { lastFrameForStab.release(); lastFrameForStab = null; }
-        if (lastFrameForMotion != null) { lastFrameForMotion.release(); lastFrameForMotion = null; }
         if (lastFrameForEnhance != null) { lastFrameForEnhance.release(); lastFrameForEnhance = null; }
-        lastBoxesArray = new Rect[0]; // 清空数组
+        lastBoxesArray = new Rect[0];
+        lastIdsArray = new int[0];
+
+        // --- [!! 新增：加载 DNN 网络 !!] ---
+        if (dnnNetPtr == 0) {
+            try {
+                String protoPath = getPathFromAsset(this, MODEL_PROTO);
+                String modelPath = getPathFromAsset(this, MODEL_WEIGHTS);
+
+                if (protoPath == null || modelPath == null) {
+                    Log.e(TAG, "Failed to get model files from assets");
+                    Toast.makeText(this, "Failed to load models", Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                Log.d(TAG, "Loading DNN Model...");
+                Log.d(TAG, "Proto: " + protoPath);
+                Log.d(TAG, "Model: " + modelPath);
+
+                dnnNetPtr = loadObjectDetector(protoPath, modelPath);
+
+                if (dnnNetPtr == 0) {
+                    Log.e(TAG, "loadObjectDetector returned 0");
+                    Toast.makeText(this, "Failed to load DNN native", Toast.LENGTH_LONG).show();
+                } else {
+                    Log.i(TAG, "DNN Model loaded successfully. Pointer: " + dnnNetPtr);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error loading DNN model: " + e.getMessage());
+            }
+        }
+        // --- [!! 加载结束 !!] ---
     }
 
     @Override
@@ -346,8 +443,6 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
         if (mOpenCvCameraView != null) {
             mOpenCvCameraView.enableView();
         }
-        // [!! 修改：不再在这里重置 isFirstFrame, 因为 onCameraViewStarted 会做 !!]
-        // isFirstFrame = true;
         currentMode = ProcessingMode.NONE;
         updateButtonStates();
     }
@@ -358,7 +453,7 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
         if (mOpenCvCameraView != null) {
             mOpenCvCameraView.disableView();
         }
-        releaseResources();
+        releaseResources(); // 确保在 onDestroy 中也释放
     }
 
     private void releaseResources() {
@@ -371,21 +466,57 @@ public class MainActivity extends Activity implements CvCameraViewListener2 {
                 lastFrameForEnhance.release();
                 lastFrameForEnhance = null;
             }
-            if (lastFrameForMotion != null) {
-                lastFrameForMotion.release();
-                lastFrameForMotion = null;
-            }
-            // --- [!! 仍然释放 !!] ---
+
             if (lastDetectedBoxes != null) {
                 lastDetectedBoxes.release();
                 lastDetectedBoxes = null;
             }
-            // --- [!! 释放结束 !!] ---
+            if (lastDetectedClassIds != null) {
+                lastDetectedClassIds.release();
+                lastDetectedClassIds = null;
+            }
 
-            lastBoxesArray = new Rect[0]; // 清空数组
+            lastBoxesArray = new Rect[0];
+            lastIdsArray = new int[0];
+
+            // --- [!! 新增：释放 DNN 网络 !!] ---
+            if (dnnNetPtr != 0) {
+                Log.d(TAG, "Releasing DNN object detector...");
+                releaseObjectDetector(dnnNetPtr);
+                dnnNetPtr = 0;
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "Error releasing resources: " + e.getMessage());
         }
+    }
+
+
+    /**
+     * [!! 新增辅助函数 !!]
+     * 将 Assets 中的文件复制到 App 的内部存储，并返回其绝对路径。
+     */
+    private String getPathFromAsset(Context context, String assetName) {
+        File outFile = new File(context.getCacheDir(), assetName);
+        if (!outFile.exists()) {
+            Log.d(TAG, "Asset file " + assetName + " not in cache. Copying...");
+            try (InputStream in = context.getAssets().open(assetName);
+                 OutputStream out = new FileOutputStream(outFile)) {
+
+                byte[] buffer = new byte[4096];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+                Log.d(TAG, "Asset file copied successfully to: " + outFile.getAbsolutePath());
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to copy asset file: " + assetName, e);
+                return null;
+            }
+        } else {
+            Log.d(TAG, "Asset file " + assetName + " already in cache.");
+        }
+
+        return outFile.getAbsolutePath();
     }
 }
