@@ -1,61 +1,95 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <androidx.percentlayout.widget.PercentRelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    tools:context=".MainActivity">
-
-    <androidx.percentlayout.widget.PercentFrameLayout
+        xmlns:app="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        app:layout_widthPercent="86%">
+        android:background="#000000"
+        tools:context=".MainActivity">
+
+    <!-- 左侧相机预览区域 (宽86%) -->
+    <androidx.percentlayout.widget.PercentFrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:layout_widthPercent="86%">
 
         <org.opencv.android.JavaCameraView
-            android:id="@+id/main_surface"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+                android:id="@+id/main_surface"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
 
     </androidx.percentlayout.widget.PercentFrameLayout>
 
-
+    <!-- 右侧控制面板 (宽20%，左边距87%) -->
+    <!-- 背景设置为半透明深色 #CC121212，营造悬浮面板效果 -->
     <androidx.percentlayout.widget.PercentRelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_widthPercent="20%"
-        app:layout_marginLeftPercent="87%">
-
-        <Button
-            android:id="@+id/button1"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:layout_marginTopPercent="12%"
-            android:text="功能1\non/off" />
+            android:layout_height="match_parent"
+            android:background="#CC121212"
+            app:layout_marginLeftPercent="87%"
+            app:layout_widthPercent="20%">
 
+        <!-- 按钮1: 去噪 -->
         <Button
-            android:id="@+id/button2"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="功能2\non/off"
-            app:layout_marginTopPercent="32%" />
+                android:id="@+id/button1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="去噪"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                app:layout_marginTopPercent="5%" />
 
+        <!-- 按钮2: 去雾 -->
         <Button
-            android:id="@+id/button3"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:layout_marginTopPercent="52%"
-            android:text="功能3\non/off" />
+                android:id="@+id/button2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="去雾"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                app:layout_marginTopPercent="20%" />
 
+        <!-- 按钮3: 夜间增强1 -->
         <Button
-            android:id="@+id/button4"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:layout_marginTopPercent="72%"
-            android:text="功能4\non/off" />
+                android:id="@+id/button3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="夜间增强1"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                app:layout_marginTopPercent="35%" />
 
+        <!-- 按钮4: 夜间增强2 -->
+        <Button
+                android:id="@+id/button4"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="夜间增强2"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                app:layout_marginTopPercent="50%" />
+
+        <!-- 按钮5: 目标检测 -->
+        <Button
+                android:id="@+id/button_detect"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="目标检测"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                app:layout_marginTopPercent="65%" />
+
+        <!-- 按钮6: 拍照 (设置默认橙色背景，Java代码中也会加强控制) -->
+        <Button
+                android:id="@+id/button_photo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="拍照"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:backgroundTint="#FF6E40"
+                app:layout_marginTopPercent="80%" />
 
     </androidx.percentlayout.widget.PercentRelativeLayout>
-
 
 </androidx.percentlayout.widget.PercentRelativeLayout>
