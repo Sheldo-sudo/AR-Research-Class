@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<androidx.percentlayout.widget.PercentRelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <androidx.percentlayout.widget.PercentFrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_widthPercent="80%">
+
+        <org.opencv.android.JavaCameraView
+            android:id="@+id/main_surface"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </androidx.percentlayout.widget.PercentFrameLayout>
+
+    <!-- 使用 GridLayout 实现按钮两列排列 -->
+    <androidx.gridlayout.widget.GridLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentRight="true"
+        android:layout_marginTop="20dp"
+        android:columnCount="2"  
+        android:orientation="vertical"
+        app:layout_marginLeftPercent="85%">
+
+        <Button
+            android:id="@+id/button1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enhance" /> 
+
+        <Button
+            android:id="@+id/button2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dehaze" />  
+
+        <Button
+            android:id="@+id/button3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="CLAHE" />  
+
+        <Button
+            android:id="@+id/button4"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="MSRCR" />  
+
+        <Button
+            android:id="@+id/buttonAutoMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Auto Mode" />  
+
+        <Button
+            android:id="@+id/buttonMotionDetect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Motion Detect" />  
+
+        <Button
+            android:id="@+id/buttonObjectDetect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Object Detect" />  
+
+    </androidx.gridlayout.widget.GridLayout>
+
+</androidx.percentlayout.widget.PercentRelativeLayout>

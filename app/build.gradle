@@ -1,0 +1,80 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace 'com.example.glasspro'
+    compileSdk 35
+
+    // ==================== 新增：指定 NDK 版本 ====================
+    ndkVersion "25.2.9519653"  // 使用兼容 OpenCV 4.11.0 的 NDK 版本
+
+    defaultConfig {
+        applicationId "com.example.glasspro"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-frtti -fexceptions"
+
+                // ==================== 修改：移除 x86 架构 ====================
+                // 只保留 ARM 架构，避免 NDK 27 与 OpenCV x86 库的兼容性问题
+                abiFilters 'armeabi-v7a', 'arm64-v8a'
+                // 如果确实需要 x86 支持，请先安装 NDK 25 或 23
+
+                arguments "-DOpenCV_DIR=" + opencvsdk + "/sdk/native"
+            }
+        }
+
+        // ==================== 新增：在 defaultConfig 级别也指定 ABI ====================
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    // ==================== 新增：打包选项（可选，用于减小 APK 体积）====================
+    packagingOptions {
+        // 如果遇到重复文件问题，可以排除
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+    }
+}
+
+dependencies {
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.activity
+    implementation libs.constraintlayout
+    implementation project(':opencv')
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+
+    implementation 'androidx.appcompat:appcompat:1.4.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.3'
+    implementation 'androidx.percentlayout:percentlayout:1.0.0'
+}
